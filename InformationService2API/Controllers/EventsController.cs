@@ -3,9 +3,8 @@ using InformationService2API.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using QuestPDF.Fluent;
-using QuestPDF.Helpers;
-using QuestPDF.Infrastructure;
+using PdfSharpCore.Drawing;
+using PdfSharpCore.Pdf;
 using System.Globalization;
 using System.Security.Claims;
 
@@ -112,48 +111,39 @@ namespace InformationService2API.Controllers
         [HttpGet("report/pdf")]
         public async Task<IActionResult> GetPdfReport()
         {
-            var events = await _context.Events
-                .OrderBy(e => e.Date)
-                .ToListAsync();
+            var events = await _context.Events.OrderBy(e => e.Date).ToListAsync();
 
-            var document = Document.Create(container =>
+            if (events == null || events.Count == 0)
+                return BadRequest("Brak wydarzeń do wygenerowania raportu.");
+
+            using var stream = new MemoryStream();
+
+            var document = new PdfDocument();
+            var page = document.AddPage();
+            var gfx = XGraphics.FromPdfPage(page);
+            var font = new XFont("Verdana", 12, XFontStyle.Regular);
+
+            double yPoint = 40;
+
+            gfx.DrawString("Zestawienie wydarzeń", new XFont("Verdana", 16, XFontStyle.Bold), XBrushes.Black, new XRect(0, 20, page.Width, 30), XStringFormats.TopCenter);
+
+            foreach (var ev in events)
             {
-                container.Page(page =>
+                var line = $"Nazwa: {ev.Name ?? "-"} | Typ: {ev.Type ?? "-"} | Data: {ev.Date.ToShortDateString()}";
+                gfx.DrawString(line, font, XBrushes.Black, new XRect(40, yPoint, page.Width - 80, 20), XStringFormats.TopLeft);
+                yPoint += 20;
+
+                if (yPoint > page.Height - 40)
                 {
-                    page.Margin(30);
-                    page.Header().Text("Zestawienie wydarzeń").FontSize(20).Bold().AlignCenter();
-                    page.Content().Table(table =>
-                    {
-                        table.ColumnsDefinition(columns =>
-                        {
-                            columns.RelativeColumn();
-                            columns.RelativeColumn();
-                            columns.ConstantColumn(100);
-                        });
+                    page = document.AddPage();
+                    gfx = XGraphics.FromPdfPage(page);
+                    yPoint = 40;
+                }
+            }
 
-                        table.Header(header =>
-                        {
-                            header.Cell().Text("Nazwa").Bold();
-                            header.Cell().Text("Typ").Bold();
-                            header.Cell().Text("Data").Bold();
-                        });
+            document.Save(stream, false);
+            var pdfBytes = stream.ToArray();
 
-                        foreach (var ev in events)
-                        {
-                            table.Cell().Text(ev.Name);
-                            table.Cell().Text(ev.Type);
-                            table.Cell().Text(ev.Date.ToShortDateString());
-                        }
-                    });
-                    page.Footer().AlignCenter().Text(txt =>
-                    {
-                        txt.Span("Wygenerowano: ");
-                        txt.Span(DateTime.Now.ToString()).Bold();
-                    });
-                });
-            });
-
-            var pdfBytes = document.GeneratePdf();
             return File(pdfBytes, "application/pdf", "zestawienie_eventow.pdf");
         }
         private EventWithLinksDto MapToDtoWithLinks(Event ev)
