@@ -11,8 +11,8 @@ using System.Security.Claims;
 
 namespace InformationService2API.Controllers
 {
-    [Route("api/[controller]")]
     [ApiController]
+    [Route("api/[controller]")]
     public class EventsController : ControllerBase
     {
         private readonly AppDbContext _context;
@@ -22,50 +22,52 @@ namespace InformationService2API.Controllers
             _context = context;
         }
 
-        private string GetUserId() =>
-            User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-        [HttpGet("day/{date}")]
-        public async Task<IActionResult> GetEventsByDay(DateTime date)
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<EventWithLinksDto>>> GetEvents()
         {
-            var userId = GetUserId();
-            var events = await _context.Events
-                .Where(e => e.Date.Date == date.Date && e.UserId == userId)
-                .ToListAsync();
-
-            return Ok(events);
+            var events = await _context.Events.ToListAsync();
+            var result = events.Select(e => MapToDtoWithLinks(e)).ToList();
+            return Ok(result);
         }
 
-        [HttpGet("week/{year}/{weekNumber}")]
-        public async Task<IActionResult> GetEventsByWeek(int year, int weekNumber)
+        [HttpGet("date/{date}")]
+        public async Task<ActionResult<IEnumerable<EventWithLinksDto>>> GetEventsByDate(DateTime date)
         {
-            var userId = GetUserId();
             var events = await _context.Events
-                .Where(e => e.Year == year && ISOWeek.GetWeekOfYear(e.Date) == weekNumber && e.UserId == userId)
+                .Where(e => e.Date.Date == date.Date)
                 .ToListAsync();
 
-            return Ok(events);
+            var result = events.Select(e => MapToDtoWithLinks(e)).ToList();
+            return Ok(result);
+        }
+
+        [HttpGet("week/{weekNumber}")]
+        public async Task<ActionResult<IEnumerable<EventWithLinksDto>>> GetEventsByWeek(int weekNumber)
+        {
+            var events = await _context.Events
+                .Where(e => CultureInfo.InvariantCulture.Calendar.GetWeekOfYear(
+                    e.Date, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday) == weekNumber)
+                .ToListAsync();
+
+            var result = events.Select(e => MapToDtoWithLinks(e)).ToList();
+            return Ok(result);
         }
 
         [HttpGet("{id}")]
-        public async Task<IActionResult> GetEvent(int id)
+        public async Task<ActionResult<EventWithLinksDto>> GetEvent(int id)
         {
-            var userId = GetUserId();
-            var ev = await _context.Events
-                .FirstOrDefaultAsync(e => e.Id == id && e.UserId == userId);
-
-            if (ev == null)
-                return NotFound();
-
-            return Ok(ev);
+            var ev = await _context.Events.FindAsync(id);
+            if (ev == null) return NotFound();
+            return Ok(MapToDtoWithLinks(ev));
         }
 
         [HttpPost]
         [Authorize]
-        public async Task<IActionResult> CreateEvent([FromBody] EventDto dto)
+        public async Task<IActionResult> CreateEvent(EventDto dto)
         {
-            var userId = GetUserId();
-            var ev = new Event
+            var userId = User.FindFirst("sub")?.Value;
+
+            var newEvent = new Event
             {
                 Name = dto.Name,
                 Type = dto.Type,
@@ -74,22 +76,17 @@ namespace InformationService2API.Controllers
                 UserId = userId
             };
 
-            _context.Events.Add(ev);
+            _context.Events.Add(newEvent);
             await _context.SaveChangesAsync();
-
-            return CreatedAtAction(nameof(GetEvent), new { id = ev.Id }, ev);
+            return CreatedAtAction(nameof(GetEvent), new { id = newEvent.Id }, newEvent);
         }
 
         [HttpPut("{id}")]
         [Authorize]
-        public async Task<IActionResult> UpdateEvent(int id, [FromBody] EventDto dto)
+        public async Task<IActionResult> UpdateEvent(int id, EventDto dto)
         {
-            var userId = GetUserId();
-            var ev = await _context.Events
-                .FirstOrDefaultAsync(e => e.Id == id && e.UserId == userId);
-
-            if (ev == null)
-                return NotFound();
+            var ev = await _context.Events.FindAsync(id);
+            if (ev == null) return NotFound();
 
             ev.Name = dto.Name;
             ev.Type = dto.Type;
@@ -100,16 +97,26 @@ namespace InformationService2API.Controllers
             return NoContent();
         }
 
-        [HttpGet("pdf")]
-        public async Task<IActionResult> GetEventsPdf()
+        [HttpDelete("{id}")]
+        [Authorize]
+        public async Task<IActionResult> DeleteEvent(int id)
         {
-            var userId = GetUserId();
+            var ev = await _context.Events.FindAsync(id);
+            if (ev == null) return NotFound();
+
+            _context.Events.Remove(ev);
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+
+        [HttpGet("report/pdf")]
+        public async Task<IActionResult> GetPdfReport()
+        {
             var events = await _context.Events
-                .Where(e => e.UserId == userId)
                 .OrderBy(e => e.Date)
                 .ToListAsync();
 
-            var pdf = Document.Create(container =>
+            var document = Document.Create(container =>
             {
                 container.Page(page =>
                 {
@@ -119,36 +126,71 @@ namespace InformationService2API.Controllers
                     {
                         table.ColumnsDefinition(columns =>
                         {
-                            columns.ConstantColumn(40); // #
                             columns.RelativeColumn();
                             columns.RelativeColumn();
-                            columns.RelativeColumn();
-                            columns.RelativeColumn();
+                            columns.ConstantColumn(100);
                         });
 
                         table.Header(header =>
                         {
-                            header.Cell().Text("#").Bold();
-                            header.Cell().Text("Nazwa");
-                            header.Cell().Text("Typ");
-                            header.Cell().Text("Data");
-                            header.Cell().Text("Opis");
+                            header.Cell().Text("Nazwa").Bold();
+                            header.Cell().Text("Typ").Bold();
+                            header.Cell().Text("Data").Bold();
                         });
 
-                        int index = 1;
                         foreach (var ev in events)
                         {
-                            table.Cell().Text(index++.ToString());
                             table.Cell().Text(ev.Name);
                             table.Cell().Text(ev.Type);
-                            table.Cell().Text(ev.Date.ToString("yyyy-MM-dd"));
-                            table.Cell().Text(ev.Description ?? "-");
+                            table.Cell().Text(ev.Date.ToShortDateString());
                         }
                     });
+                    page.Footer().AlignCenter().Text(txt =>
+                    {
+                        txt.Span("Wygenerowano: ");
+                        txt.Span(DateTime.Now.ToString()).Bold();
+                    });
                 });
-            }).GeneratePdf();
+            });
 
-            return File(pdf, "application/pdf", "events.pdf");
+            var pdfBytes = document.GeneratePdf();
+            return File(pdfBytes, "application/pdf", "zestawienie_eventow.pdf");
         }
+        private EventWithLinksDto MapToDtoWithLinks(Event ev)
+        {
+            var dto = new EventWithLinksDto
+            {
+                Id = ev.Id,
+                Name = ev.Name,
+                Type = ev.Type,
+                Date = ev.Date,
+                Description = ev.Description,
+                Links = new List<LinkDto>
+        {
+            new LinkDto
+            {
+                Href = Url.Action(nameof(GetEvent), new { id = ev.Id }),
+                Rel = "self",
+                Method = "GET"
+            },
+            new LinkDto
+            {
+                Href = Url.Action(nameof(UpdateEvent), new { id = ev.Id }),
+                Rel = "update",
+                Method = "PUT"
+            },
+            new LinkDto
+            {
+                Href = Url.Action(nameof(DeleteEvent), new { id = ev.Id }),
+                Rel = "delete",
+                Method = "DELETE"
+            }
+        }
+            };
+
+            return dto;
+        }
+
     }
+
 }
