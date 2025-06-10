@@ -65,7 +65,7 @@ namespace InformationService2API.Controllers
         [Authorize]
         public async Task<IActionResult> CreateEvent(EventDto dto)
         {
-            var userId = User.FindFirst("sub")?.Value;
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
             var newEvent = new Event
             {
