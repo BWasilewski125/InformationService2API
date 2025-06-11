@@ -17,12 +17,6 @@ namespace InformationService2API.Models
         [Required]
         public DateTime Date { get; set; }
 
-        public int Week => CultureInfo.InvariantCulture.Calendar.GetWeekOfYear(Date, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday);
-
-        public int Month => Date.Month;
-
-        public int Year => Date.Year;
-
         public string Description { get; set; }
 
         public string UserId { get; set; }

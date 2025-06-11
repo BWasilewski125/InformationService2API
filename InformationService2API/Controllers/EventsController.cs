@@ -43,12 +43,14 @@ namespace InformationService2API.Controllers
         [HttpGet("week/{weekNumber}")]
         public async Task<ActionResult<IEnumerable<EventWithLinksDto>>> GetEventsByWeek(int weekNumber)
         {
-            var events = await _context.Events
+            var dbEvents = await _context.Events.ToListAsync();
+
+            var filteredEvents = dbEvents
                 .Where(e => CultureInfo.InvariantCulture.Calendar.GetWeekOfYear(
                     e.Date, CalendarWeekRule.FirstFourDayWeek, DayOfWeek.Monday) == weekNumber)
-                .ToListAsync();
+                .ToList();
 
-            var result = events.Select(e => MapToDtoWithLinks(e)).ToList();
+            var result = filteredEvents.Select(e => MapToDtoWithLinks(e)).ToList();
             return Ok(result);
         }
 
